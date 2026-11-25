@@ -1,0 +1,7 @@
+[package]
+name = "merge_hosts"
+version = "0.1.0"
+edition = "2021"
+description = "Fusion de fichiers hosts avec conservation des commentaires"
+
+[dependencies]

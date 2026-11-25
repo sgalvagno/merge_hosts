@@ -1,0 +1,85 @@
+name: Tests et releases
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add '${{ matrix.target }}'
+      - name: Tests
+        run: cargo test --locked --target '${{ matrix.target }}'
+      - name: Compilation release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cargo build --release --locked --target '${{ matrix.target }}'
+      - name: Creer l'archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p package dist
+          cp "target/$TARGET/release/merge_hosts" package/
+          cp README.md package/
+          tar -czf "dist/merge_hosts-${TAG}-${TARGET}.tar.gz" -C package merge_hosts README.md
+      - name: Conserver l'archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publier les archives et leurs sommes de controle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz > SHA256SUMS
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" ./*.tar.gz SHA256SUMS --clobber
+          else
+            gh release create "$TAG" ./*.tar.gz SHA256SUMS --title "$TAG" --generate-notes --verify-tag
+          fi
